@@ -300,6 +300,49 @@ def setup_commands(bot: OpenClawBot):
         await interaction.response.send_message(embed=embed)
 
 
+    @bot.tree.command(name="test", description="Test Claude and GLM API connections")
+    async def test_cmd(interaction: discord.Interaction):
+        await interaction.response.send_message("🔍 Testing API connections...")
+
+        embed = discord.Embed(
+            title="🔌 API Connection Test",
+            color=0x00c8f0,
+            timestamp=datetime.utcnow()
+        )
+
+        # Test Claude
+        try:
+            from utils.claude import think
+            result = await think("You are a test.", "Reply with exactly: CLAUDE_OK")
+            if "CLAUDE_OK" in result:
+                embed.add_field(name="✅ Claude Sonnet", value=f"Connected — model: `{settings.CLAUDE_MODEL}`", inline=False)
+            else:
+                embed.add_field(name="⚠️ Claude Sonnet", value=f"Responded but unexpected: `{result[:50]}`", inline=False)
+        except Exception as e:
+            embed.add_field(name="❌ Claude Sonnet", value=f"Error: `{str(e)[:80]}`", inline=False)
+
+        # Test GLM
+        if settings.GLM_API_KEY:
+            try:
+                from utils.claude import think_code
+                result = await think_code("You are a test.", "Reply with exactly: GLM_OK")
+                if "GLM_OK" in result:
+                    embed.add_field(name="✅ GLM Code Model", value=f"Connected — model: `{settings.GLM_CODE_MODEL}`", inline=False)
+                else:
+                    embed.add_field(name="⚠️ GLM Code Model", value=f"Responded but unexpected: `{result[:50]}`", inline=False)
+            except Exception as e:
+                embed.add_field(name="❌ GLM Code Model", value=f"Error: `{str(e)[:80]}`", inline=False)
+        else:
+            embed.add_field(
+                name="⏭️ GLM Code Model",
+                value="No GLM_API_KEY set. Add it in Railway variables to enable cheap code generation.\nFalling back to Claude for code tasks.",
+                inline=False
+            )
+
+        embed.set_footer(text="OpenClaw API Router — Claude for strategy, GLM for code")
+        await interaction.followup.send(embed=embed)
+
+
 def create_bot() -> OpenClawBot:
     bot = OpenClawBot()
     setup_commands(bot)
