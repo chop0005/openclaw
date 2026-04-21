@@ -5,27 +5,30 @@ from typing import Optional
 
 @dataclass
 class Settings:
-    # Discord
-    DISCORD_TOKEN: str        = field(default_factory=lambda: os.getenv("DISCORD_TOKEN", ""))
-    DISCORD_GUILD_ID: int     = field(default_factory=lambda: int(os.getenv("DISCORD_GUILD_ID", "0")))
+    # ── Discord ───────────────────────────────────────────────
+    DISCORD_TOKEN: str         = field(default_factory=lambda: os.getenv("DISCORD_TOKEN", ""))
+    DISCORD_GUILD_ID: int      = field(default_factory=lambda: int(os.getenv("DISCORD_GUILD_ID", "0")))
 
-    # AI
-    ANTHROPIC_API_KEY: str    = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
-    CLAUDE_MODEL: str         = "claude-sonnet-4-6"
+    # ── Claude (business intelligence) ───────────────────────
+    ANTHROPIC_API_KEY: str     = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
+    CLAUDE_MODEL: str          = "claude-sonnet-4-6"
 
-    # Goal
-    CAPITAL_BUDGET: float     = field(default_factory=lambda: float(os.getenv("CAPITAL_BUDGET", "50")))
-    REVENUE_TARGET: float     = field(default_factory=lambda: float(os.getenv("REVENUE_TARGET", "500")))
-    TARGET_DAYS: int          = field(default_factory=lambda: int(os.getenv("TARGET_DAYS", "30")))
+    # ── GLM (code generation — cheaper) ──────────────────────
+    GLM_API_KEY: Optional[str] = field(default_factory=lambda: os.getenv("GLM_API_KEY"))
+    GLM_CODE_MODEL: str        = field(default_factory=lambda: os.getenv("GLM_CODE_MODEL", "GLM-5.1"))
+    GLM_ENDPOINT: str          = "https://api.z.ai/api/paas/v4/messages"
 
-    # Agent schedules (minutes)
-    TREND_INTERVAL: int       = field(default_factory=lambda: int(os.getenv("TREND_INTERVAL", "60")))
-    OPPORTUNITY_INTERVAL: int = field(default_factory=lambda: int(os.getenv("OPPORTUNITY_INTERVAL", "240")))
-    LISTING_INTERVAL: int     = field(default_factory=lambda: int(os.getenv("LISTING_INTERVAL", "360")))
-    REVENUE_INTERVAL: int     = field(default_factory=lambda: int(os.getenv("REVENUE_INTERVAL", "1440")))  # daily
+    # ── Goal ──────────────────────────────────────────────────
+    CAPITAL_BUDGET: float      = field(default_factory=lambda: float(os.getenv("CAPITAL_BUDGET", "50")))
+    REVENUE_TARGET: float      = field(default_factory=lambda: float(os.getenv("REVENUE_TARGET", "500")))
+    TARGET_DAYS: int           = field(default_factory=lambda: int(os.getenv("TARGET_DAYS", "30")))
 
-    # Optional platform keys (add as you set up accounts)
-    ETSY_API_KEY: Optional[str]       = field(default_factory=lambda: os.getenv("ETSY_API_KEY"))
-    GUMROAD_ACCESS_TOKEN: Optional[str] = field(default_factory=lambda: os.getenv("GUMROAD_ACCESS_TOKEN"))
+    # ── Agent schedules (minutes) ─────────────────────────────
+    OPPORTUNITY_INTERVAL: int  = field(default_factory=lambda: int(os.getenv("OPPORTUNITY_INTERVAL", "240")))
+    REVENUE_INTERVAL: int      = field(default_factory=lambda: int(os.getenv("REVENUE_INTERVAL", "1440")))
+
+    # ── Platform keys (add when accounts are set up) ─────────
+    ETSY_API_KEY: Optional[str]        = field(default_factory=lambda: os.getenv("ETSY_API_KEY"))
+    GUMROAD_ACCESS_TOKEN: Optional[str]= field(default_factory=lambda: os.getenv("GUMROAD_ACCESS_TOKEN"))
 
 settings = Settings()
