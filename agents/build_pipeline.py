@@ -1,307 +1,266 @@
 """
-OpenClaw — Build Pipeline Agent
-Triggered when an opportunity is approved.
-Runs the full build sequence: research → content → listing → launch plan.
-Posts everything to #build-pipeline ready to copy-paste into Etsy/Gumroad.
+OpenClaw — Build Pipeline Agent v2
+Full autonomous pipeline:
+  Research → Product Generation (PDF/Notion) → Listing Pack → Etsy Approval → Launch Plan
 """
 
 import asyncio
-import json
 import logging
 import discord
 from datetime import datetime
+
 from ventures.digital_product import (
-    research_opportunity,
-    generate_product_content,
-    generate_listing_pack,
-    generate_product_batch,
-    generate_launch_strategy
+    research_opportunity, generate_listing_pack,
+    generate_product_batch, generate_launch_strategy
 )
+from ventures.product_generator import generate_product
+from ventures.etsy_manager import EtsyApprovalView, listing_approval_embed, ETSY_SETUP_GUIDE
 from config.settings import settings
 
 logger = logging.getLogger("openclaw.build_pipeline")
 
-# Discord hard limits
-FIELD_MAX  = 1024
-TITLE_MAX  = 256
-DESC_MAX   = 4096
+FIELD_MAX = 1024
+TITLE_MAX = 256
+DESC_MAX  = 4096
 
-def trunc(text: str, limit: int = FIELD_MAX) -> str:
-    """Safely truncate any string to Discord's field limit."""
-    if not text:
-        return "N/A"
-    text = str(text)
-    return text[:limit - 3] + "..." if len(text) > limit else text
+def trunc(text, limit=FIELD_MAX):
+    if not text: return "N/A"
+    s = str(text)
+    return s[:limit-3]+"..." if len(s) > limit else s
 
-
-def safe_field(embed: discord.Embed, name: str, value: str, inline: bool = False):
-    """Add a field, guaranteed within Discord limits."""
-    embed.add_field(
-        name=trunc(name, 256),
-        value=trunc(value, FIELD_MAX) or "N/A",
-        inline=inline
-    )
-
-
-def listing_embed(listing: dict) -> discord.Embed:
-    embed = discord.Embed(
-        title="🏪 Listing Pack Ready",
-        color=0x00f5a0,
-        timestamp=datetime.utcnow()
-    )
-
-    title = listing.get('etsy_title', '')
-    if title:
-        safe_field(embed, "📝 Etsy Title (copy exactly)", f"```{trunc(title, 950)}```")
-
-    embed.add_field(name="💰 Etsy Price",    value=listing.get('etsy_price', '$9'),    inline=True)
-    embed.add_field(name="🛍️ Gumroad Price", value=listing.get('gumroad_price', '$9'), inline=True)
-
-    tags = listing.get('etsy_tags', [])
-    if tags:
-        safe_field(embed, "🏷️ Etsy Tags (all 13)", ", ".join(tags))
-
-    embed.set_footer(text="OpenClaw Build Pipeline • Full description posted below")
-    return embed
-
-
-def content_spec_embed(content: dict, product_name: str) -> discord.Embed:
-    embed = discord.Embed(
-        title=trunc(f"🔨 Build Spec: {product_name}", TITLE_MAX),
-        description=trunc(
-            f"**Format:** {content.get('format', 'N/A')} | **Est. Build Time:** {content.get('build_time_estimate', 'N/A')}",
-            DESC_MAX
-        ),
-        color=0xb060ff,
-        timestamp=datetime.utcnow()
-    )
-
-    sections = content.get('sections', [])
-    for i, section in enumerate(sections[:4]):  # max 4 sections
-        purpose   = section.get('purpose', '')
-        examples  = ", ".join(section.get('example_items', [])[:3])
-        value     = f"{purpose}\n{examples}" if examples else purpose
-        safe_field(embed, f"Section {i+1}: {section.get('name', '')}", value)
-
-    tools = content.get('tools_needed', [])
-    if tools:
-        safe_field(embed, "🛠️ Tools Needed", "\n".join([f"• {t}" for t in tools[:6]]), inline=True)
-
-    bonuses = content.get('bonus_items', [])
-    if bonuses:
-        safe_field(embed, "🎁 Bonus Items", "\n".join([f"• {b}" for b in bonuses[:5]]), inline=True)
-
-    if content.get('design_direction'):
-        safe_field(embed, "🎨 Design Direction", content['design_direction'])
-
-    if content.get('mockup_description'):
-        safe_field(embed, "📸 Thumbnail Concept", content['mockup_description'])
-
-    embed.set_footer(text="OpenClaw Build Pipeline • Build this, then paste the listing pack into Etsy")
-    return embed
-
-
-def launch_plan_embed(plan: dict) -> discord.Embed:
-    embed = discord.Embed(
-        title=trunc(f"📅 30-Day Launch Plan → ${settings.REVENUE_TARGET:.0f}", TITLE_MAX),
-        description=trunc(plan.get('strategy_summary', ''), DESC_MAX),
-        color=0xffc944,
-        timestamp=datetime.utcnow()
-    )
-
-    weeks = [('week_1','Week 1'), ('week_2','Week 2'), ('week_3','Week 3'), ('week_4','Week 4')]
-    for week_key, week_name in weeks:
-        w = plan.get(week_key, {})
-        if w:
-            val = (
-                f"**{trunc(w.get('focus',''), 200)}**\n"
-                f"Listings: {w.get('listings_to_create', 0)} | "
-                f"Spend: {w.get('budget_spend','$0')} | "
-                f"Rev: {w.get('expected_revenue','TBD')}"
-            )
-            safe_field(embed, week_name, val, inline=True)
-
-    free_channels = plan.get('free_traffic_channels', [])
-    if free_channels:
-        safe_field(embed, "📣 Free Traffic", "\n".join([f"• {trunc(c,150)}" for c in free_channels[:4]]))
-
-    milestones = []
-    if plan.get('milestone_1'): milestones.append(f"🥇 First sale: {plan['milestone_1']}")
-    if plan.get('milestone_2'): milestones.append(f"💵 $100: {plan['milestone_2']}")
-    if plan.get('milestone_3'): milestones.append(f"🎯 $500: {plan['milestone_3']}")
-    if milestones:
-        safe_field(embed, "🏁 Milestones", "\n".join(milestones))
-
-    if plan.get('month_2_projection'):
-        safe_field(embed, "📈 Month 2 Projection", plan['month_2_projection'])
-
-    embed.set_footer(text="OpenClaw Build Pipeline • Follow this plan daily")
-    return embed
-
-
-def product_batch_embed(products: list, niche: str) -> discord.Embed:
-    embed = discord.Embed(
-        title=trunc(f"🛒 Store Lineup — {niche}", TITLE_MAX),
-        description=f"Build all {len(products)} for maximum store conversion.",
-        color=0x00c8f0,
-        timestamp=datetime.utcnow()
-    )
-    for i, p in enumerate(products):
-        val = (
-            f"{p.get('type','')} • {p.get('price','$9')}\n"
-            f"{trunc(p.get('one_line_description',''), 150)}\n"
-            f"🔍 `{p.get('primary_keyword','')}`"
-        )
-        safe_field(embed, f"Product {i+1}: {p.get('name','Unknown')}", val)
-
-    embed.set_footer(text="OpenClaw • List product #1 first, get feedback, then add the rest")
-    return embed
+def sf(embed, name, value, inline=False):
+    embed.add_field(name=trunc(name,256), value=trunc(value,FIELD_MAX) or "N/A", inline=inline)
 
 
 async def run_build_pipeline(bot, channel_id: int):
-    """
-    Monitors approved_opportunities and runs the full build sequence.
-    Posts everything to #build-pipeline as copy-paste ready packages.
-    """
     await bot.wait_until_ready()
     channel = bot.get_channel(channel_id)
-
     if not channel:
         logger.error(f"Build pipeline channel {channel_id} not found")
         return
 
-    if not hasattr(bot, 'approved_opportunities'):
-        bot.approved_opportunities = []
-    if not hasattr(bot, 'built_opportunities'):
-        bot.built_opportunities = set()
+    if not hasattr(bot, 'approved_opportunities'): bot.approved_opportunities = []
+    if not hasattr(bot, 'built_opportunities'):    bot.built_opportunities = set()
+    if not hasattr(bot, 'active_ventures'):        bot.active_ventures = []
 
-    logger.info("Build Pipeline ready — monitoring for approved opportunities")
+    logger.info("Build Pipeline v2 ready")
 
     while not bot.is_closed():
         try:
             for opp in bot.approved_opportunities:
                 niche = opp.get('niche', '')
-                if niche and niche not in bot.built_opportunities:
-                    bot.built_opportunities.add(niche)
-                    logger.info(f"Starting build pipeline for: {niche}")
+                if not niche or niche in bot.built_opportunities:
+                    continue
 
-                    # ── Start ─────────────────────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        title=trunc(f"⚡ Build Pipeline Started: {niche}", TITLE_MAX),
-                        description="Running 4-stage build. Everything will be copy-paste ready.",
-                        color=0x00c8f0,
-                        timestamp=datetime.utcnow()
-                    ))
+                bot.built_opportunities.add(niche)
+                logger.info(f"Pipeline starting: {niche}")
 
-                    # ── Stage 1: Research ─────────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        description="**Stage 1/4:** Deep research...",
-                        color=0x1e3d52
-                    ))
+                # ── Header ────────────────────────────────────────────
+                await channel.send(embed=discord.Embed(
+                    title=trunc(f"⚡ Pipeline: {niche}", TITLE_MAX),
+                    description="5-stage autonomous build. Everything copy-paste ready.",
+                    color=0x00c8f0, timestamp=datetime.utcnow()
+                ))
 
-                    research = await research_opportunity(niche, settings.CAPITAL_BUDGET)
-                    if not research:
-                        await channel.send("❌ Research failed. Try `/build` again.")
-                        continue
+                # ── Stage 1: Research ─────────────────────────────────
+                await channel.send(embed=discord.Embed(description="**Stage 1/5:** Deep research...", color=0x1e3d52))
+                research = await research_opportunity(niche, settings.CAPITAL_BUDGET)
+                if not research:
+                    await channel.send("❌ Research failed. Try `/build` again.")
+                    continue
 
-                    r_embed = discord.Embed(
-                        title=trunc(f"📊 Research: {research.get('product_name', niche)}", TITLE_MAX),
-                        color=0x00f5a0,
-                        timestamp=datetime.utcnow()
+                r_embed = discord.Embed(
+                    title=trunc(f"📊 Research: {research.get('product_name', niche)}", TITLE_MAX),
+                    color=0x00f5a0, timestamp=datetime.utcnow()
+                )
+                sf(r_embed, "Product",      research.get('product_name','N/A'), inline=True)
+                sf(r_embed, "Type",         research.get('product_type','N/A'), inline=True)
+                sf(r_embed, "Price",        research.get('price_point','$9'),   inline=True)
+                sf(r_embed, "Buyer",        research.get('buyer_persona','N/A'))
+                sf(r_embed, "Pain Point",   research.get('pain_point','N/A'))
+                sf(r_embed, "Potential",    research.get('monthly_potential','N/A'), inline=True)
+                await channel.send(embed=r_embed)
+                await asyncio.sleep(2)
+
+                # ── Stage 2: Generate Actual Product ──────────────────
+                await channel.send(embed=discord.Embed(
+                    description="**Stage 2/5:** Generating the actual product (PDF or Notion)...",
+                    color=0x1e3d52
+                ))
+
+                product_result = await generate_product(research, niche)
+                ptype = product_result.get('type', 'pdf').upper()
+
+                # Post product summary
+                prod_embed = discord.Embed(
+                    title=trunc(f"{'📄' if ptype=='PDF' else '📋'} {ptype} Product Generated", TITLE_MAX),
+                    description=trunc(product_result.get('summary', ''), DESC_MAX),
+                    color=0x00f5a0 if ptype == "PDF" else 0xb060ff,
+                    timestamp=datetime.utcnow()
+                )
+                structure = product_result.get('structure', {})
+                if structure.get('sections'):
+                    sf(prod_embed, "Sections", "\n".join([f"• {s}" for s in structure['sections'][:6]]))
+                sf(prod_embed, "Unique Angle", structure.get('unique_angle','N/A'), inline=True)
+                sf(prod_embed, "Complexity",   structure.get('complexity','N/A'),   inline=True)
+
+                if ptype == "PDF":
+                    result_data = product_result.get('result', {})
+                    sf(prod_embed, "File",      result_data.get('filename', 'N/A'), inline=True)
+                    sf(prod_embed, "Size",      f"{result_data.get('size_kb',0)} KB", inline=True)
+                    sf(prod_embed, "Pages",     str(result_data.get('page_count',0)), inline=True)
+                    prod_embed.add_field(
+                        name="📥 Download",
+                        value=f"File saved to Railway volume.\nUse `/download {niche}` to get the file.",
+                        inline=False
                     )
-                    safe_field(r_embed, "Product",          research.get('product_name','N/A'),    inline=True)
-                    safe_field(r_embed, "Type",             research.get('product_type','N/A'),    inline=True)
-                    safe_field(r_embed, "Price",            research.get('price_point','N/A'),     inline=True)
-                    safe_field(r_embed, "Buyer",            research.get('buyer_persona','N/A'))
-                    safe_field(r_embed, "Pain Point",       research.get('pain_point','N/A'))
-                    safe_field(r_embed, "Monthly Potential",research.get('monthly_potential','N/A'),inline=True)
-                    await channel.send(embed=r_embed)
-                    await asyncio.sleep(2)
+                else:
+                    result_data = product_result.get('result', {})
+                    if result_data.get('build_guide'):
+                        await channel.send(
+                            f"**📋 Notion Build Guide — follow these steps:**\n"
+                            f"```{trunc(result_data['build_guide'], 1900)}```"
+                        )
 
-                    # ── Stage 2: Content Spec ─────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        description="**Stage 2/4:** Generating product content spec...",
-                        color=0x1e3d52
-                    ))
-                    content = await generate_product_content(research)
-                    if content:
-                        await channel.send(embed=content_spec_embed(content, research.get('product_name', niche)))
-                    await asyncio.sleep(2)
+                await channel.send(embed=prod_embed)
+                await asyncio.sleep(2)
 
-                    # ── Stage 3: Listing Pack ─────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        description="**Stage 3/4:** Generating Etsy + Gumroad listing pack...",
-                        color=0x1e3d52
-                    ))
-                    listing = await generate_listing_pack(research, content or {})
-                    if listing:
-                        await channel.send(embed=listing_embed(listing))
+                # ── Stage 3: Listing Pack ─────────────────────────────
+                await channel.send(embed=discord.Embed(
+                    description="**Stage 3/5:** Generating Etsy + Gumroad listing pack...",
+                    color=0x1e3d52
+                ))
 
-                        # Post full description as plain message (no embed limit)
-                        desc = listing.get('etsy_description', '')
-                        if desc:
-                            await channel.send("**📋 Full Etsy Description — copy this exactly:**")
-                            # Split into 1900-char chunks to stay under Discord message limit
-                            chunks = [desc[i:i+1900] for i in range(0, len(desc), 1900)]
-                            for chunk in chunks:
-                                await channel.send(f"```{chunk}```")
+                listing = await generate_listing_pack(research, {})
+                if listing:
+                    # Listing summary embed
+                    l_embed = discord.Embed(title="🏪 Listing Pack Ready", color=0x00f5a0, timestamp=datetime.utcnow())
+                    sf(l_embed, "📝 Etsy Title", f"```{trunc(listing.get('etsy_title',''), 950)}```")
+                    sf(l_embed, "💰 Price", listing.get('etsy_price','$9'), inline=True)
+                    sf(l_embed, "🛍️ Gumroad", listing.get('gumroad_price','$9'), inline=True)
+                    tags = listing.get('etsy_tags', [])
+                    if tags:
+                        sf(l_embed, "🏷️ Tags (13)", ", ".join(tags))
+                    await channel.send(embed=l_embed)
 
-                        # Social posts
-                        social = discord.Embed(title="📱 Social Media Posts", color=0xff4fa3, timestamp=datetime.utcnow())
-                        if listing.get('tiktok_hook'):
-                            safe_field(social, "🎬 TikTok Hook",      listing['tiktok_hook'])
-                        if listing.get('instagram_caption'):
-                            safe_field(social, "📸 Instagram",        listing['instagram_caption'])
-                        if listing.get('reddit_pitch'):
-                            safe_field(social, "🔴 Reddit",           listing['reddit_pitch'])
-                        if listing.get('pinterest_caption'):
-                            safe_field(social, "📌 Pinterest",        listing['pinterest_caption'])
-                        await channel.send(embed=social)
+                    # Full description as plain message
+                    desc = listing.get('etsy_description', '')
+                    if desc:
+                        await channel.send("**📋 Full Etsy Description — copy exactly:**")
+                        for chunk in [desc[i:i+1900] for i in range(0, len(desc), 1900)]:
+                            await channel.send(f"```{chunk}```")
 
-                    await asyncio.sleep(2)
+                    # Social posts
+                    s_embed = discord.Embed(title="📱 Social Posts", color=0xff4fa3, timestamp=datetime.utcnow())
+                    if listing.get('tiktok_hook'):       sf(s_embed, "🎬 TikTok",    listing['tiktok_hook'])
+                    if listing.get('instagram_caption'): sf(s_embed, "📸 Instagram", listing['instagram_caption'])
+                    if listing.get('reddit_pitch'):      sf(s_embed, "🔴 Reddit",    listing['reddit_pitch'])
+                    if listing.get('pinterest_caption'): sf(s_embed, "📌 Pinterest", listing['pinterest_caption'])
+                    await channel.send(embed=s_embed)
 
-                    # ── Stage 4: Launch Plan ──────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        description="**Stage 4/4:** Building your 30-day launch plan...",
-                        color=0x1e3d52
-                    ))
+                await asyncio.sleep(2)
 
-                    products = await generate_product_batch(niche, count=5)
-                    if products:
-                        await channel.send(embed=product_batch_embed(products, niche))
+                # ── Stage 4: Etsy Listing Approval ───────────────────
+                await channel.send(embed=discord.Embed(
+                    description="**Stage 4/5:** Ready for Etsy — awaiting your approval...",
+                    color=0x1e3d52
+                ))
 
-                    plan = await generate_launch_strategy(niche, settings.CAPITAL_BUDGET)
-                    if plan:
-                        await channel.send(embed=launch_plan_embed(plan))
+                if listing:
+                    listing_data = {
+                        "title":       listing.get('etsy_title', research.get('product_name', niche))[:140],
+                        "description": listing.get('etsy_description', ''),
+                        "price":       float(listing.get('etsy_price', '$9').replace('$','')),
+                        "tags":        listing.get('etsy_tags', [])[:13],
+                    }
 
-                    # ── Done ──────────────────────────────────────────
-                    await channel.send(embed=discord.Embed(
-                        title="✅ Build Complete!",
-                        description=(
-                            f"**{niche} — everything is ready.**\n\n"
-                            f"**Your next 3 actions:**\n"
-                            f"1. Build the product using the spec above (Notion/Canva/Sheets — free)\n"
-                            f"2. Open your Etsy shop at etsy.com/sell ($0 to open, $0.20/listing)\n"
-                            f"3. Copy-paste the listing pack above into your first listing\n\n"
-                            f"Type `/revenue add \"product name\" 9.00` when you get your first sale 💰"
-                        ),
-                        color=0x00f5a0,
-                        timestamp=datetime.utcnow()
-                    ))
+                    approval_embed = listing_approval_embed(listing_data, product_result)
+                    view = EtsyApprovalView(listing_data, product_result, bot)
 
-                    if not hasattr(bot, 'active_ventures'):
-                        bot.active_ventures = []
-                    bot.active_ventures.append({
-                        'niche': niche,
-                        'research': research,
-                        'listing': listing,
-                        'plan': plan,
-                        'started': datetime.now().isoformat()
-                    })
+                    # Show Etsy setup guide if not configured
+                    from ventures.etsy_manager import EtsyClient
+                    etsy = EtsyClient()
+                    if not etsy.is_configured():
+                        await channel.send(
+                            f"⚠️ **Etsy API not configured yet.**\n{ETSY_SETUP_GUIDE}"
+                        )
+
+                    await channel.send(embed=approval_embed, view=view)
+
+                await asyncio.sleep(2)
+
+                # ── Stage 5: Store Lineup + Launch Plan ───────────────
+                await channel.send(embed=discord.Embed(
+                    description="**Stage 5/5:** Building store lineup + 30-day plan...",
+                    color=0x1e3d52
+                ))
+
+                products = await generate_product_batch(niche, count=5)
+                if products:
+                    p_embed = discord.Embed(
+                        title=trunc(f"🛒 Store Lineup — {niche}", TITLE_MAX),
+                        description=f"Build all {len(products)} for max conversion.",
+                        color=0x00c8f0, timestamp=datetime.utcnow()
+                    )
+                    for i, p in enumerate(products):
+                        sf(p_embed,
+                           f"#{i+1}: {p.get('name','Unknown')}",
+                           f"{p.get('type','')} • {p.get('price','$9')}\n{trunc(p.get('one_line_description',''),150)}\n🔍 `{p.get('primary_keyword','')}`"
+                        )
+                    await channel.send(embed=p_embed)
+
+                plan = await generate_launch_strategy(niche, settings.CAPITAL_BUDGET)
+                if plan:
+                    plan_embed = discord.Embed(
+                        title=trunc(f"📅 30-Day Plan → ${settings.REVENUE_TARGET:.0f}", TITLE_MAX),
+                        description=trunc(plan.get('strategy_summary',''), DESC_MAX),
+                        color=0xffc944, timestamp=datetime.utcnow()
+                    )
+                    for wk, wn in [('week_1','Week 1'),('week_2','Week 2'),('week_3','Week 3'),('week_4','Week 4')]:
+                        w = plan.get(wk, {})
+                        if w:
+                            sf(plan_embed, wn,
+                               f"**{trunc(w.get('focus',''),120)}**\n"
+                               f"Lists: {w.get('listings_to_create',0)} | "
+                               f"Rev: {w.get('expected_revenue','TBD')}",
+                               inline=True
+                            )
+                    channels_str = "\n".join([f"• {trunc(c,100)}" for c in plan.get('free_traffic_channels',[])[:4]])
+                    if channels_str: sf(plan_embed, "📣 Free Traffic", channels_str)
+                    milestones = []
+                    if plan.get('milestone_1'): milestones.append(f"🥇 {plan['milestone_1']}")
+                    if plan.get('milestone_2'): milestones.append(f"💵 {plan['milestone_2']}")
+                    if plan.get('milestone_3'): milestones.append(f"🎯 {plan['milestone_3']}")
+                    if milestones: sf(plan_embed, "🏁 Milestones", "\n".join(milestones))
+                    await channel.send(embed=plan_embed)
+
+                # ── Done ──────────────────────────────────────────────
+                await channel.send(embed=discord.Embed(
+                    title="✅ Full Pipeline Complete!",
+                    description=(
+                        f"**{niche} — everything is ready.**\n\n"
+                        f"**What OpenClaw built:**\n"
+                        f"• {'PDF product file' if product_result.get('type')=='pdf' else 'Notion template spec + build guide'}\n"
+                        f"• Complete Etsy listing (title, tags, description)\n"
+                        f"• Gumroad product copy\n"
+                        f"• Social posts (TikTok, Instagram, Reddit, Pinterest)\n"
+                        f"• 5-product store lineup\n"
+                        f"• 30-day launch plan\n\n"
+                        f"**Your only job:** Open Etsy → paste the listing → upload the product file.\n"
+                        f"Type `/revenue add \"product\" 9.00` on your first sale 💰"
+                    ),
+                    color=0x00f5a0, timestamp=datetime.utcnow()
+                ))
+
+                bot.active_ventures.append({
+                    'niche': niche, 'research': research,
+                    'product': product_result, 'listing': listing,
+                    'plan': plan, 'started': datetime.now().isoformat()
+                })
 
         except Exception as e:
             logger.error(f"Build pipeline error: {e}")
             if channel:
-                await channel.send(f"❌ Build pipeline error: {e}")
+                await channel.send(f"❌ Pipeline error: {e}")
 
         await asyncio.sleep(15)
