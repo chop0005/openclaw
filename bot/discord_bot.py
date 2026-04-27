@@ -23,7 +23,8 @@ from ventures.digital_product import (
     generate_product_batch, generate_launch_strategy
 )
 from ventures.etsy_manager import EtsyClient, ETSY_SETUP_GUIDE
-from utils.claude import route, pick_model, get_available_models, MODELS, build_system_prompt
+from utils.claude import think, think_json, think_code
+from agents.ai_chat import MODELS, get_available, pick, call_model, build_context, model_status_embed as _model_status_embed
 
 logger = logging.getLogger("openclaw.bot")
 
@@ -98,7 +99,7 @@ class OpenClawBot(commands.Bot):
         ch = await self._get("logs")
         if not ch:
             return
-        available = get_available_models()
+        available = get_available()
         model_list = " • ".join([
             f"{MODELS[k]['emoji']} {MODELS[k]['name']}"
             for k in available if k in MODELS
@@ -190,7 +191,7 @@ def setup_commands(bot: OpenClawBot):
         model="Optional: claude | gpt4o | gemini | deepseek | glm (auto-picks if not set)"
     )
     async def ask_cmd(interaction: discord.Interaction, message: str, model: str = ""):
-        available = get_available_models()
+        available = get_available()
         if not available:
             await interaction.response.send_message(
                 "❌ No AI models configured. Add at least ANTHROPIC_API_KEY to Railway variables."
@@ -232,31 +233,33 @@ def setup_commands(bot: OpenClawBot):
         }
 
         try:
-            response, used_model = await route(
-                prompt=clean_message,
-                bot_context=context,
-                force_model=force_model,
-                max_tokens=1500
-            )
-
-            used_info = MODELS.get(used_model, MODELS["claude"])
-
-            # Split if needed
+            model_key = force_model or pick(clean_message)
+            available = get_available()
+            chain = [model_key] + [m for m in ["claude","gpt4o","deepseek","gemini","glm"] if m != model_key and m in available]
+            system = build_context(bot)
+            response = None
+            used_model = model_key
+            for key in chain:
+                if key not in available: continue
+                try:
+                    response = await call_model(key, system, clean_message)
+                    used_model = key
+                    break
+                except Exception: continue
+            if not response:
+                response = "❌ All models failed. Check API keys in Railway."
+            used_info = MODELS.get(used_model, {"emoji": "❓", "name": "Unknown"})
             chunks = [response[i:i+1900] for i in range(0, len(response), 1900)]
             for i, chunk in enumerate(chunks):
-                if i == 0:
-                    footer = f"\n\n{used_info['emoji']} *{used_info['name']}*"
-                    await interaction.followup.send(chunk + footer)
-                else:
-                    await interaction.followup.send(chunk)
-
+                suffix = f"\n\n{used_info['emoji']} *{used_info['name']}*" if i == 0 else ""
+                await interaction.followup.send(chunk + suffix)
         except Exception as e:
             await interaction.followup.send(f"❌ Error: {e}")
 
     # ── /models ───────────────────────────────────────────────
     @bot.tree.command(name="models", description="Show status of all AI models")
     async def models_cmd(interaction: discord.Interaction):
-        await interaction.response.send_message(embed=model_status_embed(bot))
+        await interaction.response.send_message(embed=_model_status_embed(bot))
 
     # ── /test ─────────────────────────────────────────────────
     @bot.tree.command(name="test", description="Test all API connections")
@@ -286,7 +289,7 @@ def setup_commands(bot: OpenClawBot):
                 )
                 continue
             try:
-                resp, _ = await route(test_prompt, force_model=model_key, max_tokens=20)
+                resp = await call_model(model_key, 'You are a test.', test_prompt)
                 embed.add_field(
                     name=f"✅ {model_info['emoji']} {model_info['name']}",
                     value="Connected",
@@ -463,7 +466,7 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="status", description="Show system status")
     async def status_cmd(interaction: discord.Interaction):
         total     = sum(bot.revenue_log.values())
-        available = get_available_models()
+        available = get_available()
         embed = discord.Embed(
             title="🦾 OpenClaw Status",
             color=0x00f5a0, timestamp=datetime.utcnow()
