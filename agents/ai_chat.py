@@ -10,7 +10,7 @@ import logging
 import discord
 from datetime import datetime, timedelta
 from collections import defaultdict
-from utils.ai_router import route, pick_model, get_available_models, MODELS, build_system_prompt
+from utils.claude import route, pick_model, get_available_models, MODELS, build_system_prompt
 
 logger = logging.getLogger("openclaw.ai_chat")
 
