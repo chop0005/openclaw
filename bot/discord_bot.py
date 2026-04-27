@@ -23,7 +23,7 @@ from ventures.digital_product import (
     generate_product_batch, generate_launch_strategy
 )
 from ventures.etsy_manager import EtsyClient, ETSY_SETUP_GUIDE
-from utils.ai_router import route, pick_model, get_available_models, MODELS, build_system_prompt
+from utils.claude import route, pick_model, get_available_models, MODELS, build_system_prompt
 
 logger = logging.getLogger("openclaw.bot")
 
