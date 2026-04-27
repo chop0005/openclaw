@@ -343,6 +343,64 @@ def setup_commands(bot: OpenClawBot):
         await interaction.followup.send(embed=embed)
 
 
+    @bot.tree.command(name="etsy", description="Etsy connection and listing management")
+    @app_commands.describe(action="setup | test | listings | auth")
+    async def etsy_cmd(interaction: discord.Interaction, action: str = "test"):
+        from ventures.etsy_manager import EtsyClient, ETSY_SETUP_GUIDE
+        etsy = EtsyClient()
+
+        if action == "setup":
+            await interaction.response.send_message(ETSY_SETUP_GUIDE)
+
+        elif action == "test":
+            if not etsy.is_configured():
+                await interaction.response.send_message(
+                    "⚠️ Etsy not configured.\n"
+                    "Missing variables: " +
+                    (", ".join([
+                        v for v, val in [
+                            ("ETSY_API_KEY", settings.ETSY_API_KEY),
+                            ("ETSY_ACCESS_TOKEN", settings.ETSY_ACCESS_TOKEN),
+                            ("ETSY_SHOP_ID", settings.ETSY_SHOP_ID)
+                        ] if not val
+                    ])) +
+                    "\n\nType `/etsy setup` for instructions."
+                )
+                return
+            await interaction.response.send_message("🔍 Testing Etsy connection...")
+            try:
+                shop = await etsy.get_shop()
+                if shop.get("shop_id"):
+                    await interaction.followup.send(
+                        f"✅ Etsy connected!\n"
+                        f"Shop: **{shop.get('shop_name')}**\n"
+                        f"ID: `{shop.get('shop_id')}`\n"
+                        f"Listings: {shop.get('listing_active_count', 0)} active"
+                    )
+                else:
+                    await interaction.followup.send(f"❌ Connection failed: {shop}")
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+
+        elif action == "listings":
+            if not etsy.is_configured():
+                await interaction.response.send_message("⚠️ Etsy not configured. Type `/etsy setup`.")
+                return
+            await interaction.response.send_message("📋 Fetching your Etsy drafts...")
+            try:
+                drafts = await etsy.get_listings("draft")
+                active = await etsy.get_listings("active")
+                msg = f"**Etsy Shop Status**\n• Active listings: {len(active)}\n• Draft listings: {len(drafts)}\n"
+                if drafts:
+                    msg += "\n**Drafts:**\n" + "\n".join([f"• {d.get('title','Unknown')[:60]} (ID: {d.get('listing_id')})" for d in drafts[:5]])
+                await interaction.followup.send(msg)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+
+        else:
+            await interaction.response.send_message("Usage: `/etsy setup` | `/etsy test` | `/etsy listings`")
+
+
 def create_bot() -> OpenClawBot:
     bot = OpenClawBot()
     setup_commands(bot)
