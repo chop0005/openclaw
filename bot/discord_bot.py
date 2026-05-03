@@ -200,6 +200,7 @@ def setup_commands(bot: OpenClawBot):
     # ── /help ─────────────────────────────────────────────────
     @bot.tree.command(name="help", description="Show all OpenClaw commands")
     async def help_cmd(interaction: discord.Interaction):
+        await interaction.response.defer()
         embed = discord.Embed(
             title="🦾 OpenClaw Commands",
             description=f"Goal: **${settings.REVENUE_TARGET:,.0f} in {settings.TARGET_DAYS} days**",
@@ -242,7 +243,7 @@ def setup_commands(bot: OpenClawBot):
                 value="\n".join([f"`{c}` — {d}" for c, d in cmds]),
                 inline=False
             )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ── /ask ──────────────────────────────────────────────────
     @bot.tree.command(name="ask", description="Ask any AI model a question")
@@ -251,11 +252,10 @@ def setup_commands(bot: OpenClawBot):
         model="Optional: claude | gpt4o | gemini | deepseek | glm"
     )
     async def ask_cmd(interaction: discord.Interaction, message: str, model: str = ""):
+        await interaction.response.defer()
         available = get_available()
         if not available:
-            await interaction.response.send_message(
-                "❌ No AI models configured. Add ANTHROPIC_API_KEY to Railway."
-            )
+            await interaction.followup.send("❌ No AI models configured. Add ANTHROPIC_API_KEY to Railway.")
             return
 
         force_model = model.lower().strip("@") if model else None
@@ -353,7 +353,8 @@ def setup_commands(bot: OpenClawBot):
     # ── /scan ─────────────────────────────────────────────────
     @bot.tree.command(name="scan", description="Scan for money-making opportunities now")
     async def scan_cmd(interaction: discord.Interaction):
-        await interaction.response.send_message(
+        await interaction.response.defer()
+        await interaction.followup.send(
             f"🔍 Scanning... (budget: **${settings.CAPITAL_BUDGET}**, "
             f"target: **${settings.REVENUE_TARGET} in {settings.TARGET_DAYS} days**)"
         )
@@ -374,7 +375,8 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="build", description="Run full build pipeline for a niche")
     @app_commands.describe(niche="The niche (e.g. 'ADHD planner' or 'Gen Z finance tracker')")
     async def build_cmd(interaction: discord.Interaction, niche: str):
-        await interaction.response.send_message(
+        await interaction.response.defer()
+        await interaction.followup.send(
             f"🚀 Starting build pipeline for: **{niche}**\n"
             f"Watch #build-pipeline for everything."
         )
@@ -388,7 +390,8 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="listing", description="Generate a complete Etsy + Gumroad listing")
     @app_commands.describe(product="Product name or description")
     async def listing_cmd(interaction: discord.Interaction, product: str):
-        await interaction.response.send_message(
+        await interaction.response.defer()
+        await interaction.followup.send(
             f"📝 Generating listing for: **{product}**..."
         )
         ch = await bot._get("build-pipeline")
@@ -429,7 +432,8 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="products", description="Generate a 5-product store lineup")
     @app_commands.describe(niche="Store niche")
     async def products_cmd(interaction: discord.Interaction, niche: str):
-        await interaction.response.send_message(
+        await interaction.response.defer()
+        await interaction.followup.send(
             f"🛒 Generating lineup for: **{niche}**..."
         )
         ch = await bot._get("build-pipeline")
@@ -464,7 +468,8 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="plan", description="Generate your 30-day launch plan")
     @app_commands.describe(niche="Your niche")
     async def plan_cmd(interaction: discord.Interaction, niche: str):
-        await interaction.response.send_message(
+        await interaction.response.defer()
+        await interaction.followup.send(
             f"📅 Building 30-day plan for: **{niche}**..."
         )
         ch = await bot._get("build-pipeline")
@@ -563,14 +568,15 @@ def setup_commands(bot: OpenClawBot):
                     value=f"You hit ${settings.REVENUE_TARGET:.0f}! Time to scale.",
                     inline=False
                 )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.defer(ephemeral=False)
+            await interaction.followup.send(embed=embed)
             ch = await bot._get("revenue")
             if ch:
                 await ch.send(embed=revenue_embed(bot))
         elif action == "report":
-            await interaction.response.send_message(embed=revenue_embed(bot))
+            await interaction.followup.send(embed=revenue_embed(bot))
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Usage:\n"
                 "`/revenue add \"Product Name\" 9.00` — log a sale\n"
                 "`/revenue report` — view dashboard"
@@ -585,7 +591,8 @@ def setup_commands(bot: OpenClawBot):
     # ── /status ───────────────────────────────────────────────
     @bot.tree.command(name="status", description="Show system status")
     async def status_cmd(interaction: discord.Interaction):
-        total     = sum(bot.revenue_log.values())
+        await interaction.response.defer()
+        total = sum(bot.revenue_log.values())
         available = get_available()
         embed = discord.Embed(
             title="🦾 OpenClaw Status",
@@ -631,7 +638,7 @@ def setup_commands(bot: OpenClawBot):
         embed.set_footer(
             text=f"Goal: ${settings.REVENUE_TARGET:.0f} in {settings.TARGET_DAYS} days"
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     # ── /etsy ─────────────────────────────────────────────────
     @bot.tree.command(name="etsy", description="Etsy connection and listing management")
@@ -728,12 +735,11 @@ def setup_commands(bot: OpenClawBot):
 
     @bot.tree.command(name="gumroad", description="Gumroad connection and management")
     async def gumroad_cmd(interaction: discord.Interaction, action: str = "test"):
+        await interaction.response.defer()
         try:
             from ventures.gumroad_manager import GumroadClient, GUMROAD_SETUP
         except ImportError:
-            await interaction.response.send_message(
-                "⚠️ Gumroad manager not available yet."
-            )
+            await interaction.followup.send("⚠️ Gumroad manager not available yet.")
             return
 
         gr = GumroadClient()
@@ -760,9 +766,7 @@ def setup_commands(bot: OpenClawBot):
 
         elif action == "products":
             if not gr.is_configured():
-                await interaction.response.send_message(
-                    "⚠️ Gumroad not configured."
-                )
+                await interaction.followup.send("⚠️ Gumroad not configured.")
                 return
             await interaction.response.send_message("📦 Fetching products...")
             try:
@@ -793,12 +797,11 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="pinterest", description="Pinterest auto-posting")
     @app_commands.describe(action="setup | test")
     async def pinterest_cmd(interaction: discord.Interaction, action: str = "test"):
+        await interaction.response.defer()
         try:
             from ventures.pinterest_manager import PinterestClient, PINTEREST_SETUP
         except ImportError:
-            await interaction.response.send_message(
-                "⚠️ Pinterest manager not available yet."
-            )
+            await interaction.followup.send("⚠️ Pinterest manager not available yet.")
             return
 
         pt = PinterestClient()
