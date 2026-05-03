@@ -23,6 +23,7 @@ from agents.ai_chat import (
     model_status_embed as _model_status_embed
 )
 from utils.claude import think, think_json, think_code
+# New agent imports (lazy-loaded in functions for safety)
 
 logger = logging.getLogger("openclaw.bot")
 
@@ -35,6 +36,9 @@ CHANNEL_STRUCTURE = [
     ("ai-chat",        "🤖 Chat with Claude, GPT-4o, Gemini, DeepSeek — all models"),
     ("commands",       "⚙️ Type your slash commands here"),
     ("logs",           "📋 System activity log"),
+    ("autonomous",     "🤖 Daily plans + approval requests"),
+    ("competitors",    "🕵️ Competitor intelligence reports"),
+    ("improvements",   "🔧 Self-improvement proposals"),
 ]
 
 CATEGORY_NAME = "🦾 OPENCLAW HQ"
@@ -151,6 +155,42 @@ class OpenClawBot(commands.Bot):
                 asyncio.create_task(run_newsletter_agent(self, social_ch.id))
             except ImportError:
                 pass
+
+        # New agents (lazy imports)
+        auto_ch   = await self._get("autonomous")
+        comp_ch   = await self._get("competitors")
+        impr_ch   = await self._get("improvements")
+        build_ch2 = await self._get("build-pipeline")
+
+        if auto_ch:
+            try:
+                from agents.autonomous import run_autonomous_engine
+                asyncio.create_task(run_autonomous_engine(self, auto_ch.id))
+            except ImportError: pass
+
+        if comp_ch:
+            try:
+                from agents.competitor_scanner import run_competitor_scanner
+                asyncio.create_task(run_competitor_scanner(self, comp_ch.id))
+            except ImportError: pass
+
+        if impr_ch:
+            try:
+                from agents.self_improve import run_self_improvement_scheduler
+                asyncio.create_task(run_self_improvement_scheduler(self, impr_ch.id))
+            except ImportError: pass
+
+        if social_ch:
+            try:
+                from agents.social_poster import run_social_poster
+                asyncio.create_task(run_social_poster(self, social_ch.id))
+            except ImportError: pass
+
+        if build_ch2:
+            try:
+                from agents.bundle_affiliate import run_bundle_and_affiliate_engine
+                asyncio.create_task(run_bundle_and_affiliate_engine(self, build_ch2.id))
+            except ImportError: pass
 
         logger.info("✅ All agents started")
 
@@ -870,6 +910,216 @@ def setup_commands(bot: OpenClawBot):
                 "`/newsletter leadmagnet` — generate email capture freebie\n"
                 "`/newsletter issue` — generate next newsletter issue"
             )
+
+
+    # ── /improve ──────────────────────────────────────────────
+    @bot.tree.command(name="improve", description="Analyze and improve OpenClaw's performance")
+    @app_commands.describe(
+        feedback="What's not working (e.g. 'product descriptions aren't converting')",
+        area="Area to analyze: listings | social | opportunities | products | general"
+    )
+    async def improve_cmd(interaction: discord.Interaction, feedback: str = "", area: str = "general"):
+        await interaction.response.defer()
+        try:
+            from agents.self_improve import (
+                analyze_performance, analyze_from_feedback,
+                improvement_embed, ImprovementApprovalView, run_improvement_check
+            )
+            ch = await bot._get("improvements")
+            context = {
+                "revenue":  getattr(bot, 'revenue_log', {}),
+                "ventures": getattr(bot, 'active_ventures', []),
+            }
+
+            if feedback:
+                await interaction.followup.send(
+                    f"🔍 Analyzing: {feedback}..."
+                )
+                analysis = await analyze_from_feedback(feedback, context)
+            else:
+                await interaction.followup.send(
+                    f"🔍 Running full analysis of **{area}**..."
+                )
+                analysis = await analyze_performance(area, context)
+
+            if not analysis:
+                await interaction.followup.send("⚠️ Analysis failed. Try again.")
+                return
+
+            improvements = analysis.get("improvements", [])
+            if not improvements:
+                await interaction.followup.send(
+                    "No improvements needed. Assessment: " + str(analysis.get("current_performance", "Looking good!"))
+                )
+                return
+
+            # Post to #improvements channel
+
+            # Post to #improvements channel
+            if ch:
+                header = discord.Embed(
+                    title=f"🔧 Improvement Analysis: {area.upper()}",
+                    description=(
+                        f"**Assessment:** {analysis.get('current_performance', 'N/A')[:300]}\n"
+                        f"**Root cause:** {analysis.get('root_cause', analysis.get('feedback_summary', 'N/A'))[:200]}"
+                    ),
+                    color=0xb060ff,
+                    timestamp=datetime.utcnow()
+                )
+                quick = analysis.get("quick_wins", analysis.get("immediate_action", ""))
+                if quick:
+                    if isinstance(quick, list):
+                        header.add_field(name="⚡ Quick Wins", value="\n".join([f"• {w}" for w in quick[:3]]), inline=False)
+                    else:
+                        header.add_field(name="⚡ Immediate Action", value=str(quick)[:512], inline=False)
+                await ch.send(embed=header)
+
+                for i, imp in enumerate(improvements[:3]):
+                    embed = improvement_embed(analysis, imp, i)
+                    view  = ImprovementApprovalView(imp, bot)
+                    await ch.send(embed=embed, view=view)
+                    await asyncio.sleep(1)
+
+            await interaction.followup.send(
+                f"✅ {len(improvements)} improvement(s) posted to #improvements for your review."
+            )
+        except ImportError as e:
+            await interaction.followup.send(f"❌ Module error: {e}")
+
+    # ── /autonomy ─────────────────────────────────────────────
+    @bot.tree.command(name="autonomy", description="View or trigger OpenClaw's autonomous daily plan")
+    async def autonomy_cmd(interaction: discord.Interaction):
+        await interaction.response.defer()
+        try:
+            from agents.autonomous import generate_daily_plan, plan_embed, ApprovalView
+            ch = await bot._get("autonomous")
+            context = {
+                "revenue":  getattr(bot, 'revenue_log', {}),
+                "ventures": getattr(bot, 'active_ventures', []),
+            }
+            plan = await generate_daily_plan(context.get("ventures",[]), context.get("revenue",{}))
+            if plan:
+                embed = plan_embed(plan)
+                if ch:
+                    approvals = plan.get("approval_needed", [])
+                    await ch.send(embed=embed)
+                    for action in approvals[:3]:
+                        a_embed = discord.Embed(
+                            title=f"✋ {action.get('action','Action')[:80]}",
+                            description=f"**Why:** {action.get('reason','N/A')}\n**Impact:** {action.get('impact','N/A')}",
+                            color=0xffc944, timestamp=datetime.utcnow()
+                        )
+                        view = ApprovalView(action, bot)
+                        await ch.send(embed=a_embed, view=view)
+                await interaction.followup.send("✅ Daily plan posted to #autonomous")
+            else:
+                await interaction.followup.send("⚠️ Failed to generate plan. Try again.")
+        except ImportError as e:
+            await interaction.followup.send(f"❌ Module error: {e}")
+
+    # ── /competitors ──────────────────────────────────────────
+    @bot.tree.command(name="competitors", description="Run competitor intelligence scan for a niche")
+    @app_commands.describe(niche="Niche to scan (leave blank for all active niches)")
+    async def competitors_cmd(interaction: discord.Interaction, niche: str = ""):
+        await interaction.response.defer()
+        try:
+            from agents.competitor_scanner import scan_competitors, competitor_embed
+            ch = await bot._get("competitors")
+            target = niche or (
+                bot.active_ventures[0].get("niche")
+                if bot.active_ventures else "digital templates"
+            )
+            await interaction.followup.send(f"🕵️ Scanning competitors for: **{target}**...")
+            data = await scan_competitors(target)
+            if data:
+                embed = competitor_embed(data, target)
+                if ch:
+                    await ch.send(embed=embed)
+                await interaction.followup.send(embed=embed)
+            else:
+                await interaction.followup.send("⚠️ Scan failed. Try again.")
+        except ImportError as e:
+            await interaction.followup.send(f"❌ Module error: {e}")
+
+    # ── /bundle ───────────────────────────────────────────────
+    @bot.tree.command(name="bundle", description="Create a product bundle from your store")
+    @app_commands.describe(niche="Your niche (e.g. 'Notion templates for entrepreneurs')")
+    async def bundle_cmd(interaction: discord.Interaction, niche: str = ""):
+        await interaction.response.defer()
+        try:
+            from agents.bundle_affiliate import create_bundle, bundle_embed, affiliate_embed, get_relevant_affiliates
+            ch = await bot._get("build-pipeline")
+            target = niche or (
+                bot.active_ventures[0].get("niche")
+                if bot.active_ventures else "digital products"
+            )
+            await interaction.followup.send(f"📦 Creating bundle for: **{target}**...")
+            research = bot.active_ventures[0].get("research", {}) if bot.active_ventures else {}
+            products = [
+                research.get("product_name", target),
+                f"{target} Starter Kit",
+                f"Complete {target} Bundle"
+            ]
+            bundle = await create_bundle(products, target)
+            if bundle:
+                embed = bundle_embed(bundle)
+                if ch:
+                    await ch.send(embed=embed)
+                await interaction.followup.send(embed=embed)
+            else:
+                await interaction.followup.send("⚠️ Bundle creation failed. Try again.")
+        except ImportError as e:
+            await interaction.followup.send(f"❌ Module error: {e}")
+
+    # ── /affiliates ───────────────────────────────────────────
+    @bot.tree.command(name="affiliates", description="Find affiliate programs for your niche")
+    @app_commands.describe(niche="Your niche (leave blank for active niche)")
+    async def affiliates_cmd(interaction: discord.Interaction, niche: str = ""):
+        try:
+            from agents.bundle_affiliate import get_relevant_affiliates, affiliate_embed
+            target = niche or (
+                bot.active_ventures[0].get("niche")
+                if bot.active_ventures else "digital products"
+            )
+            affiliates = get_relevant_affiliates(target, target)
+            embed = affiliate_embed(affiliates, target)
+            await interaction.response.send_message(embed=embed)
+        except ImportError as e:
+            await interaction.response.send_message(f"❌ Module error: {e}")
+
+    # ── /post ─────────────────────────────────────────────────
+    @bot.tree.command(name="post", description="Generate and post social content for your product")
+    @app_commands.describe(
+        product="Product name",
+        platform="tiktok | instagram | twitter | pinterest | reddit | all"
+    )
+    async def post_cmd(interaction: discord.Interaction, product: str = "", platform: str = "all"):
+        await interaction.response.defer()
+        try:
+            from agents.social_poster import generate_content_batch, content_card_embed, PostApprovalView
+            ch = await bot._get("social-posts")
+            target = product or (
+                bot.active_ventures[0].get("research", {}).get("product_name", "digital template")
+                if bot.active_ventures else "digital template"
+            )
+            niche = bot.active_ventures[0].get("niche", "digital products") if bot.active_ventures else "digital products"
+            url   = bot.active_ventures[0].get("etsy_url", "") if bot.active_ventures else ""
+
+            platforms = ["tiktok","instagram","twitter","pinterest","reddit"] if platform == "all" else [platform]
+            await interaction.followup.send(f"📱 Generating content for **{target}** on {len(platforms)} platform(s)...")
+
+            contents = await generate_content_batch(target, niche, url, "$9", platforms)
+            for c in contents:
+                embed = content_card_embed(c, target)
+                view  = PostApprovalView(c, target, bot)
+                if ch:
+                    await ch.send(embed=embed, view=view)
+                else:
+                    await interaction.followup.send(embed=embed)
+
+            await interaction.followup.send(f"✅ {len(contents)} posts ready in #social-posts")
+        except ImportError as e:
+            await interaction.followup.send(f"❌ Module error: {e}")
 
 
 def create_bot() -> OpenClawBot:
