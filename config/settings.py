@@ -43,6 +43,11 @@ class Settings:
     BEEHIIV_API_KEY: Optional[str]        = field(default_factory=lambda: os.getenv("BEEHIIV_API_KEY"))
     BEEHIIV_PUBLICATION_ID: Optional[str] = field(default_factory=lambda: os.getenv("BEEHIIV_PUBLICATION_ID"))
 
+    # ── Social Media APIs ─────────────────────────────────────
+    TWITTER_BEARER_TOKEN: Optional[str]  = field(default_factory=lambda: os.getenv("TWITTER_BEARER_TOKEN"))
+    REDDIT_CLIENT_ID: Optional[str]      = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_ID"))
+    REDDIT_CLIENT_SECRET: Optional[str]  = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_SECRET"))
+
     # ── Web server ────────────────────────────────────────────
     PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "8080")))
 
