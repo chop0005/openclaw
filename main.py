@@ -1,7 +1,7 @@
 """
-OpenClaw — Money-First Autonomous Business Engine
-Target: $500 in 30 days via digital products
-Stack:  Railway + Discord + Claude API + Etsy/Gumroad
+OpenClaw — Autonomous Business Engine
+Starts both the Discord bot and a lightweight web server.
+Web server handles: Etsy OAuth callback, health checks.
 """
 
 import asyncio
@@ -15,8 +15,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("openclaw")
 
+
 async def main():
-    logger.info("🦾 OpenClaw starting — Target: $500 in 30 days")
+    logger.info("🦾 OpenClaw starting...")
 
     if not settings.DISCORD_TOKEN:
         logger.error("DISCORD_TOKEN missing. Add to Railway variables.")
@@ -28,8 +29,26 @@ async def main():
         logger.error("DISCORD_GUILD_ID missing. Add to Railway variables.")
         return
 
+    # Start web server (handles Etsy OAuth + health checks)
+    try:
+        from ventures.etsy_oauth import start_web_server
+        web_runner = await start_web_server(settings.PORT)
+        logger.info(f"✅ Web server on port {settings.PORT}")
+    except ImportError:
+        web_runner = None
+        logger.warning("Web server not available — Etsy OAuth disabled")
+    except Exception as e:
+        web_runner = None
+        logger.warning(f"Web server failed to start: {e}")
+
+    # Start Discord bot
     bot = create_bot()
-    await bot.start(settings.DISCORD_TOKEN)
+    try:
+        await bot.start(settings.DISCORD_TOKEN)
+    finally:
+        if web_runner:
+            await web_runner.cleanup()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
