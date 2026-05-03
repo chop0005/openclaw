@@ -23,6 +23,10 @@ from ventures.digital_product import (
     generate_product_batch, generate_launch_strategy
 )
 from ventures.etsy_manager import EtsyClient, ETSY_SETUP_GUIDE
+from ventures.gumroad_manager import GumroadClient, GUMROAD_SETUP
+from ventures.pinterest_manager import PinterestClient, auto_pin_product, PINTEREST_SETUP
+from agents.analytics import analyze_etsy_market, analyze_own_performance, analytics_embed
+from agents.newsletter import generate_lead_magnet, lead_magnet_embed, NEWSLETTER_SETUP
 from utils.claude import think, think_json, think_code
 from agents.ai_chat import MODELS, get_available, pick, call_model, build_context, model_status_embed as _model_status_embed
 
@@ -32,7 +36,8 @@ CHANNEL_STRUCTURE = [
     ("opportunities",  "💡 Ranked opportunities — approve one to start building"),
     ("build-pipeline", "🏗️ Full build output — product files, listings, launch plans"),
     ("revenue",        "💰 Revenue tracking and reinvestment advice"),
-    ("social-posts",   "📱 Ready-to-post social content"),
+    ("social-posts",   "📱 Pinterest pins, social content, newsletter drafts"),
+    ("analytics",      "📊 Market intelligence and performance reports"),
     ("ai-chat",        "🤖 Chat with Claude, GPT-4o, Gemini, DeepSeek — all in one place"),
     ("commands",       "⚙️ Type your slash commands here"),
     ("logs",           "📋 System activity log"),
@@ -110,7 +115,7 @@ class OpenClawBot(commands.Bot):
                 f"**Goal:** ${settings.REVENUE_TARGET:,.0f} in {settings.TARGET_DAYS} days\n"
                 f"**Budget:** ${settings.CAPITAL_BUDGET:.0f}\n\n"
                 f"**AI Stack ({len(available)} models):**\n{model_list}\n\n"
-                f"**Agents:** Opportunity Scanner • Build Pipeline • Revenue Tracker • AI Chat\n\n"
+                f"**Agents:** Opportunity Scanner • Build Pipeline • Revenue Tracker • AI Chat • Analytics • Newsletter • Pinterest\n\n"
                 f"Type `/help` in #commands • Chat freely in #ai-chat"
             ),
             color=0x00f5a0,
@@ -124,6 +129,9 @@ class OpenClawBot(commands.Bot):
         rev_ch   = await self._get("revenue")
         chat_ch  = await self._get("ai-chat")
 
+        analytics_ch = await self._get("analytics")
+        social_ch    = await self._get("social-posts")
+
         if opp_ch:
             asyncio.create_task(
                 run_opportunity_scanner(self, opp_ch.id, settings.OPPORTUNITY_INTERVAL)
@@ -134,6 +142,14 @@ class OpenClawBot(commands.Bot):
             asyncio.create_task(run_revenue_tracker(self, rev_ch.id))
         if chat_ch:
             asyncio.create_task(run_ai_chat_monitor(self, chat_ch.id))
+        if analytics_ch:
+            from agents.analytics import run_analytics_agent
+            asyncio.create_task(run_analytics_agent(self, analytics_ch.id))
+        if social_ch:
+            from ventures.pinterest_manager import run_pinterest_scheduler
+            asyncio.create_task(run_pinterest_scheduler(self, social_ch.id))
+            from agents.newsletter import run_newsletter_agent
+            asyncio.create_task(run_newsletter_agent(self, social_ch.id))
 
         logger.info("✅ All agents started")
 
@@ -550,6 +566,125 @@ def setup_commands(bot: OpenClawBot):
         else:
             await interaction.response.send_message(
                 "Usage: `/etsy setup` | `/etsy test` | `/etsy listings`"
+            )
+
+
+    # ── /gumroad ──────────────────────────────────────────────
+    @bot.tree.command(name="gumroad", description="Gumroad connection and setup")
+    @app_commands.describe(action="setup | test | products")
+    async def gumroad_cmd(interaction: discord.Interaction, action: str = "test"):
+        gr = GumroadClient()
+        if action == "setup":
+            await interaction.response.send_message(GUMROAD_SETUP)
+        elif action == "test":
+            if not gr.is_configured():
+                await interaction.response.send_message(
+                    "⚠️ Add `GUMROAD_ACCESS_TOKEN` to Railway variables.\n"
+                    "Type `/gumroad setup` for instructions."
+                )
+                return
+            await interaction.response.send_message("🔍 Testing Gumroad connection...")
+            try:
+                products = await gr.get_products()
+                await interaction.followup.send(
+                    f"✅ Gumroad connected!\n"
+                    f"Products: {len(products)} total"
+                )
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+        elif action == "products":
+            if not gr.is_configured():
+                await interaction.response.send_message("⚠️ Gumroad not configured.")
+                return
+            await interaction.response.send_message("📦 Fetching Gumroad products...")
+            try:
+                products = await gr.get_products()
+                if products:
+                    lines = [f"• {p.get('name','?')[:60]} — ${p.get('price',0)/100:.2f} — {'Published' if p.get('published') else 'Draft'}" for p in products[:8]]
+                    await interaction.followup.send("**Your Gumroad Products:**\n" + "\n".join(lines))
+                else:
+                    await interaction.followup.send("No products yet. Run `/build` to create your first one.")
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+
+    # ── /pinterest ────────────────────────────────────────────
+    @bot.tree.command(name="pinterest", description="Pinterest auto-posting setup and control")
+    @app_commands.describe(action="setup | test | pin")
+    async def pinterest_cmd(interaction: discord.Interaction, action: str = "test"):
+        pt = PinterestClient()
+        if action == "setup":
+            await interaction.response.send_message(PINTEREST_SETUP)
+        elif action == "test":
+            if not pt.is_configured():
+                await interaction.response.send_message(
+                    "⚠️ Pinterest not configured.\n"
+                    "Missing: " + (", ".join([
+                        v for v, val in [
+                            ("PINTEREST_ACCESS_TOKEN", settings.PINTEREST_ACCESS_TOKEN),
+                            ("PINTEREST_BOARD_ID",     settings.PINTEREST_BOARD_ID)
+                        ] if not val
+                    ])) + "\nType `/pinterest setup` for instructions."
+                )
+                return
+            await interaction.response.send_message("🔍 Testing Pinterest connection...")
+            try:
+                boards = await pt.get_boards()
+                await interaction.followup.send(
+                    f"✅ Pinterest connected!\n"
+                    f"Boards: {len(boards)}\n"
+                    f"Active board ID: `{settings.PINTEREST_BOARD_ID}`"
+                )
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+
+    # ── /analytics ────────────────────────────────────────────
+    @bot.tree.command(name="analytics", description="Market intelligence and performance analysis")
+    @app_commands.describe(niche="Niche to analyze (leave blank for your store performance)")
+    async def analytics_cmd(interaction: discord.Interaction, niche: str = ""):
+        await interaction.response.defer()
+        ch = await bot._get("analytics")
+
+        if niche:
+            await interaction.followup.send(f"🔍 Analyzing market for: **{niche}**...")
+            analysis = await analyze_etsy_market(niche)
+            if analysis:
+                embed = analytics_embed(analysis, f"🔍 Market Intel: {niche[:50]}")
+                if ch:
+                    await ch.send(embed=embed)
+                await interaction.followup.send(embed=embed)
+            else:
+                await interaction.followup.send("⚠️ Analysis failed. Try again.")
+        else:
+            revenue  = getattr(bot, 'revenue_log', {})
+            ventures = getattr(bot, 'active_ventures', [])
+            analysis = await analyze_own_performance(revenue, ventures)
+            embed = analytics_embed(analysis, "📊 Your Store Performance")
+            if ch:
+                await ch.send(embed=embed)
+            await interaction.followup.send(embed=embed)
+
+    # ── /newsletter ───────────────────────────────────────────
+    @bot.tree.command(name="newsletter", description="Newsletter and email capture management")
+    @app_commands.describe(action="setup | leadmagnet | issue")
+    async def newsletter_cmd(interaction: discord.Interaction, action: str = "setup", niche: str = ""):
+        if action == "setup":
+            await interaction.response.send_message(NEWSLETTER_SETUP)
+        elif action == "leadmagnet":
+            target_niche = niche or (bot.active_ventures[0].get('niche') if bot.active_ventures else "digital products")
+            await interaction.response.send_message(f"🧲 Generating lead magnet for: **{target_niche}**...")
+            ch = await bot._get("social-posts")
+            lm = await generate_lead_magnet(target_niche, target_niche + " template")
+            if lm:
+                embed = lead_magnet_embed(lm, target_niche)
+                if ch:
+                    await ch.send(embed=embed)
+                await interaction.followup.send(embed=embed)
+        else:
+            await interaction.response.send_message(
+                "Usage:\n"
+                "`/newsletter setup` — Beehiiv setup guide\n"
+                "`/newsletter leadmagnet` — generate email capture freebie\n"
+                "`/newsletter issue` — generate next newsletter issue"
             )
 
 
