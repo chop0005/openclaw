@@ -310,7 +310,8 @@ def setup_commands(bot: OpenClawBot):
     # ── /models ───────────────────────────────────────────────
     @bot.tree.command(name="models", description="Show status of all AI models")
     async def models_cmd(interaction: discord.Interaction):
-        await interaction.response.send_message(embed=_model_status_embed(bot))
+        await interaction.response.defer()
+        await interaction.followup.send(embed=_model_status_embed(bot))
 
     # ── /test ─────────────────────────────────────────────────
     @bot.tree.command(name="test", description="Test all API connections")
@@ -578,7 +579,8 @@ def setup_commands(bot: OpenClawBot):
     # ── /goal ─────────────────────────────────────────────────
     @bot.tree.command(name="goal", description="Show progress toward your target")
     async def goal_cmd(interaction: discord.Interaction):
-        await interaction.response.send_message(embed=revenue_embed(bot))
+        await interaction.response.defer()
+        await interaction.followup.send(embed=revenue_embed(bot))
 
     # ── /status ───────────────────────────────────────────────
     @bot.tree.command(name="status", description="Show system status")
@@ -633,79 +635,20 @@ def setup_commands(bot: OpenClawBot):
 
     # ── /etsy ─────────────────────────────────────────────────
     @bot.tree.command(name="etsy", description="Etsy connection and listing management")
-    @app_commands.describe(action="setup | test | listings")
-    async def etsy_cmd(interaction: discord.Interaction, action: str = "test"):
+    @app_commands.describe(action="setup | auth | test | listings")
+    async def etsy_cmd(interaction: discord.Interaction, action: str = "setup"):
+        await interaction.response.defer()
         try:
             from ventures.etsy_manager import EtsyClient, ETSY_SETUP_GUIDE
         except ImportError:
-            await interaction.response.send_message(
-                "⚠️ Etsy manager not available yet."
-            )
+            await interaction.followup.send("⚠️ Etsy manager not available yet.")
             return
-
         etsy = EtsyClient()
-
         if action == "setup":
-            await interaction.response.send_message(ETSY_SETUP_GUIDE)
-
-        elif action == "test":
-            missing = [
-                v for v, val in [
-                    ("ETSY_API_KEY",      settings.ETSY_API_KEY),
-                    ("ETSY_ACCESS_TOKEN", settings.ETSY_ACCESS_TOKEN),
-                    ("ETSY_SHOP_ID",      settings.ETSY_SHOP_ID),
-                ] if not val
-            ]
-            if missing:
-                await interaction.response.send_message(
-                    f"⚠️ Etsy not fully configured.\n"
-                    f"Missing: {', '.join(missing)}\n"
-                    f"Type `/etsy setup` for instructions."
-                )
-                return
-            await interaction.response.send_message("🔍 Testing Etsy connection...")
-            try:
-                shop = await etsy.get_shop()
-                if shop.get("shop_id"):
-                    await interaction.followup.send(
-                        f"✅ Etsy connected!\n"
-                        f"Shop: **{shop.get('shop_name')}**\n"
-                        f"Active listings: {shop.get('listing_active_count', 0)}"
-                    )
-                else:
-                    await interaction.followup.send(
-                        f"❌ Connection failed: {shop}"
-                    )
-            except Exception as e:
-                await interaction.followup.send(f"❌ Error: {e}")
-
-        elif action == "listings":
-            if not etsy.is_configured():
-                await interaction.response.send_message(
-                    "⚠️ Etsy not configured. Type `/etsy setup`."
-                )
-                return
-            await interaction.response.send_message("📋 Fetching listings...")
-            try:
-                drafts = await etsy.get_listings("draft")
-                active = await etsy.get_listings("active")
-                msg = (
-                    f"**Etsy Shop**\n"
-                    f"• Active: {len(active)}\n"
-                    f"• Drafts: {len(drafts)}\n"
-                )
-                if drafts:
-                    msg += "\n**Drafts:**\n" + "\n".join([
-                        f"• {d.get('title','?')[:60]} (ID: {d.get('listing_id')})"
-                        for d in drafts[:5]
-                    ])
-                await interaction.followup.send(msg)
-            except Exception as e:
-                await interaction.followup.send(f"❌ Error: {e}")
-
+            await interaction.followup.send(ETSY_SETUP_GUIDE)
         elif action == "auth":
             if not settings.ETSY_API_KEY:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "⚠️ Add `ETSY_API_KEY` to Railway variables first.\n"
                     "Get it from developers.etsy.com → your app → Keystring."
                 )
@@ -719,39 +662,71 @@ def setup_commands(bot: OpenClawBot):
                 embed = discord.Embed(
                     title="🔐 Etsy Authorization",
                     description=(
-                        f"Click the link below to connect your Etsy shop.\n\n"
-                        f"**What happens:**\n"
-                        f"1. You click the link\n"
-                        f"2. Etsy asks you to authorize OpenClaw\n"
-                        f"3. You get redirected back automatically\n"
-                        f"4. Your tokens appear here in Discord\n\n"
-                        f"**Callback URL:** `{redirect}`\n"
-                        f"*(Make sure this matches your Etsy app settings)*"
+                        "Click the link below to connect your Etsy shop.\n\n"
+                        "**Steps:**\n"
+                        "1. Click the link below\n"
+                        "2. Authorize OpenClaw on Etsy\n"
+                        "3. Tokens appear here automatically\n\n"
+                        f"**Callback URL:** `{redirect}`"
                     ),
                     color=0xf56400
                 )
                 embed.add_field(
-                    name="🔗 Authorization Link",
-                    value=f"[Click here to authorize Etsy →]({auth_url})",
+                    name="🔗 Click to Authorize",
+                    value=f"[Authorize Etsy Shop →]({auth_url})",
                     inline=False
                 )
                 embed.set_footer(text="Link expires in 10 minutes")
-                await interaction.response.send_message(embed=embed)
+                await interaction.followup.send(embed=embed)
             except ImportError:
-                await interaction.response.send_message(
-                    "⚠️ Etsy OAuth module not available. Upload the latest version."
-                )
+                await interaction.followup.send("⚠️ Etsy OAuth not available. Upload latest version.")
             except Exception as e:
-                await interaction.response.send_message(f"❌ OAuth error: {e}")
-
+                await interaction.followup.send(f"❌ OAuth error: {e}")
+        elif action == "test":
+            missing = [v for v, val in [
+                ("ETSY_API_KEY", settings.ETSY_API_KEY),
+                ("ETSY_ACCESS_TOKEN", settings.ETSY_ACCESS_TOKEN),
+                ("ETSY_SHOP_ID", settings.ETSY_SHOP_ID),
+            ] if not val]
+            if missing:
+                await interaction.followup.send(
+                    f"⚠️ Missing: {', '.join(missing)}\n"
+                    f"Use `/etsy setup` for instructions, `/etsy auth` to connect."
+                )
+                return
+            try:
+                shop = await etsy.get_shop()
+                if shop.get("shop_id"):
+                    await interaction.followup.send(
+                        f"✅ Connected! Shop: **{shop.get('shop_name')}** | "
+                        f"Listings: {shop.get('listing_active_count', 0)}"
+                    )
+                else:
+                    await interaction.followup.send(f"❌ Failed: {shop}")
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
+        elif action == "listings":
+            if not etsy.is_configured():
+                await interaction.followup.send("⚠️ Not configured. Use `/etsy setup`.")
+                return
+            try:
+                drafts = await etsy.get_listings("draft")
+                active = await etsy.get_listings("active")
+                msg = f"**Etsy:** {len(active)} active | {len(drafts)} drafts"
+                if drafts:
+                    msg += "\n" + "\n".join([
+                        f"• {d.get('title','?')[:60]}" for d in drafts[:5]
+                    ])
+                await interaction.followup.send(msg)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error: {e}")
         else:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Usage: `/etsy setup` | `/etsy auth` | `/etsy test` | `/etsy listings`"
             )
 
-    # ── /gumroad ──────────────────────────────────────────────
+
     @bot.tree.command(name="gumroad", description="Gumroad connection and management")
-    @app_commands.describe(action="setup | test | products")
     async def gumroad_cmd(interaction: discord.Interaction, action: str = "test"):
         try:
             from ventures.gumroad_manager import GumroadClient, GUMROAD_SETUP
@@ -768,7 +743,7 @@ def setup_commands(bot: OpenClawBot):
 
         elif action == "test":
             if not gr.is_configured():
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "⚠️ Add `GUMROAD_ACCESS_TOKEN` to Railway variables.\n"
                     "Type `/gumroad setup` for instructions."
                 )
@@ -872,14 +847,13 @@ def setup_commands(bot: OpenClawBot):
         action: str = "setup",
         niche: str = ""
     ):
+        await interaction.response.defer()
         if action == "setup":
             try:
                 from agents.newsletter import NEWSLETTER_SETUP
-                await interaction.response.send_message(NEWSLETTER_SETUP)
+                await interaction.followup.send(NEWSLETTER_SETUP)
             except ImportError:
-                await interaction.response.send_message(
-                    "⚠️ Newsletter module not available yet."
-                )
+                await interaction.followup.send("⚠️ Newsletter module not available yet.")
 
         elif action == "leadmagnet":
             target = niche or (
@@ -1075,6 +1049,7 @@ def setup_commands(bot: OpenClawBot):
     @bot.tree.command(name="affiliates", description="Find affiliate programs for your niche")
     @app_commands.describe(niche="Your niche (leave blank for active niche)")
     async def affiliates_cmd(interaction: discord.Interaction, niche: str = ""):
+        await interaction.response.defer()
         try:
             from agents.bundle_affiliate import get_relevant_affiliates, affiliate_embed
             target = niche or (
@@ -1083,9 +1058,9 @@ def setup_commands(bot: OpenClawBot):
             )
             affiliates = get_relevant_affiliates(target, target)
             embed = affiliate_embed(affiliates, target)
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
         except ImportError as e:
-            await interaction.response.send_message(f"❌ Module error: {e}")
+            await interaction.followup.send(f"❌ Module error: {e}")
 
     # ── /post ─────────────────────────────────────────────────
     @bot.tree.command(name="post", description="Generate and post social content for your product")
