@@ -6,4 +6,6 @@ from .digital_product import (
 from .product_generator import generate_product, decide_product_type
 from .pdf_generator import generate_pdf_product
 from .notion_generator import generate_notion_template
-from .etsy_manager import EtsyClient, EtsyApprovalView, listing_approval_embed
+from .etsy_manager import EtsyClient, EtsyApprovalView, listing_approval_embed, ETSY_SETUP_GUIDE
+from .gumroad_manager import GumroadClient, GumroadApprovalView, GUMROAD_SETUP
+from .pinterest_manager import PinterestClient, auto_pin_product, pinterest_embed, PINTEREST_SETUP
