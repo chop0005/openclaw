@@ -663,9 +663,50 @@ def setup_commands(bot: OpenClawBot):
             except Exception as e:
                 await interaction.followup.send(f"❌ Error: {e}")
 
+        elif action == "auth":
+            if not settings.ETSY_API_KEY:
+                await interaction.response.send_message(
+                    "⚠️ Add `ETSY_API_KEY` to Railway variables first.\n"
+                    "Get it from developers.etsy.com → your app → Keystring."
+                )
+                return
+            try:
+                from ventures.etsy_oauth import generate_auth_url, set_bot_ref, get_redirect_uri
+                ch = await bot._get("commands")
+                set_bot_ref(bot, ch or interaction.channel)
+                auth_url, state = await generate_auth_url()
+                redirect = get_redirect_uri()
+                embed = discord.Embed(
+                    title="🔐 Etsy Authorization",
+                    description=(
+                        f"Click the link below to connect your Etsy shop.\n\n"
+                        f"**What happens:**\n"
+                        f"1. You click the link\n"
+                        f"2. Etsy asks you to authorize OpenClaw\n"
+                        f"3. You get redirected back automatically\n"
+                        f"4. Your tokens appear here in Discord\n\n"
+                        f"**Callback URL:** `{redirect}`\n"
+                        f"*(Make sure this matches your Etsy app settings)*"
+                    ),
+                    color=0xf56400
+                )
+                embed.add_field(
+                    name="🔗 Authorization Link",
+                    value=f"[Click here to authorize Etsy →]({auth_url})",
+                    inline=False
+                )
+                embed.set_footer(text="Link expires in 10 minutes")
+                await interaction.response.send_message(embed=embed)
+            except ImportError:
+                await interaction.response.send_message(
+                    "⚠️ Etsy OAuth module not available. Upload the latest version."
+                )
+            except Exception as e:
+                await interaction.response.send_message(f"❌ OAuth error: {e}")
+
         else:
             await interaction.response.send_message(
-                "Usage: `/etsy setup` | `/etsy test` | `/etsy listings`"
+                "Usage: `/etsy setup` | `/etsy auth` | `/etsy test` | `/etsy listings`"
             )
 
     # ── /gumroad ──────────────────────────────────────────────
