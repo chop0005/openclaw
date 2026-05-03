@@ -39,9 +39,12 @@ class Settings:
     PINTEREST_ACCESS_TOKEN: Optional[str] = field(default_factory=lambda: os.getenv("PINTEREST_ACCESS_TOKEN"))
     PINTEREST_BOARD_ID: Optional[str]     = field(default_factory=lambda: os.getenv("PINTEREST_BOARD_ID"))
 
-    # ── Beehiiv (newsletter) ──────────────────────────────────
+    # ── Beehiiv ───────────────────────────────────────────────
     BEEHIIV_API_KEY: Optional[str]        = field(default_factory=lambda: os.getenv("BEEHIIV_API_KEY"))
     BEEHIIV_PUBLICATION_ID: Optional[str] = field(default_factory=lambda: os.getenv("BEEHIIV_PUBLICATION_ID"))
+
+    # ── Web server ────────────────────────────────────────────
+    PORT: int = field(default_factory=lambda: int(os.getenv("PORT", "8080")))
 
     # ── Goal ──────────────────────────────────────────────────
     CAPITAL_BUDGET: float           = field(default_factory=lambda: float(os.getenv("CAPITAL_BUDGET", "50")))
