@@ -1,22 +1,13 @@
 """
-OpenClaw — Build Pipeline Agent v2
-Full autonomous pipeline:
-  Research → Product Generation (PDF/Notion) → Listing Pack → Etsy Approval → Launch Plan
+OpenClaw — Build Pipeline Agent v3
+All external imports are lazy (inside functions) so missing files
+never crash the bot at startup. Fully self-contained startup.
 """
 
 import asyncio
 import logging
 import discord
 from datetime import datetime
-
-from ventures.digital_product import (
-    research_opportunity, generate_listing_pack,
-    generate_product_batch, generate_launch_strategy
-)
-from ventures.product_generator import generate_product
-from ventures.etsy_manager import EtsyApprovalView, listing_approval_embed, ETSY_SETUP_GUIDE
-from ventures.gumroad_manager import GumroadApprovalView, GumroadClient, GUMROAD_SETUP
-from ventures.pinterest_manager import auto_pin_product, pinterest_embed, PinterestClient
 from config.settings import settings
 
 logger = logging.getLogger("openclaw.build_pipeline")
@@ -31,7 +22,11 @@ def trunc(text, limit=FIELD_MAX):
     return s[:limit-3]+"..." if len(s) > limit else s
 
 def sf(embed, name, value, inline=False):
-    embed.add_field(name=trunc(name,256), value=trunc(value,FIELD_MAX) or "N/A", inline=inline)
+    embed.add_field(
+        name=trunc(name, 256),
+        value=trunc(value, FIELD_MAX) or "N/A",
+        inline=inline
+    )
 
 
 async def run_build_pipeline(bot, channel_id: int):
@@ -45,7 +40,7 @@ async def run_build_pipeline(bot, channel_id: int):
     if not hasattr(bot, 'built_opportunities'):    bot.built_opportunities = set()
     if not hasattr(bot, 'active_ventures'):        bot.active_ventures = []
 
-    logger.info("Build Pipeline v2 ready")
+    logger.info("Build Pipeline ready")
 
     while not bot.is_closed():
         try:
@@ -57,15 +52,27 @@ async def run_build_pipeline(bot, channel_id: int):
                 bot.built_opportunities.add(niche)
                 logger.info(f"Pipeline starting: {niche}")
 
-                # ── Header ────────────────────────────────────────────
+                # ── Lazy imports — safe even if files missing ─────────
+                try:
+                    from ventures.digital_product import (
+                        research_opportunity, generate_listing_pack,
+                        generate_product_batch, generate_launch_strategy
+                    )
+                except ImportError as e:
+                    await channel.send(f"❌ Import error: {e}")
+                    continue
+
+                # ── Start ─────────────────────────────────────────────
                 await channel.send(embed=discord.Embed(
                     title=trunc(f"⚡ Pipeline: {niche}", TITLE_MAX),
-                    description="5-stage autonomous build. Everything copy-paste ready.",
+                    description="Running build sequence. Everything will be copy-paste ready.",
                     color=0x00c8f0, timestamp=datetime.utcnow()
                 ))
 
                 # ── Stage 1: Research ─────────────────────────────────
-                await channel.send(embed=discord.Embed(description="**Stage 1/5:** Deep research...", color=0x1e3d52))
+                await channel.send(embed=discord.Embed(
+                    description="**Stage 1/5:** Deep research...", color=0x1e3d52
+                ))
                 research = await research_opportunity(niche, settings.CAPITAL_BUDGET)
                 if not research:
                     await channel.send("❌ Research failed. Try `/build` again.")
@@ -75,56 +82,44 @@ async def run_build_pipeline(bot, channel_id: int):
                     title=trunc(f"📊 Research: {research.get('product_name', niche)}", TITLE_MAX),
                     color=0x00f5a0, timestamp=datetime.utcnow()
                 )
-                sf(r_embed, "Product",      research.get('product_name','N/A'), inline=True)
-                sf(r_embed, "Type",         research.get('product_type','N/A'), inline=True)
-                sf(r_embed, "Price",        research.get('price_point','$9'),   inline=True)
-                sf(r_embed, "Buyer",        research.get('buyer_persona','N/A'))
-                sf(r_embed, "Pain Point",   research.get('pain_point','N/A'))
-                sf(r_embed, "Potential",    research.get('monthly_potential','N/A'), inline=True)
+                sf(r_embed, "Product",    research.get('product_name','N/A'), inline=True)
+                sf(r_embed, "Type",       research.get('product_type','N/A'), inline=True)
+                sf(r_embed, "Price",      research.get('price_point','$9'),   inline=True)
+                sf(r_embed, "Buyer",      research.get('buyer_persona','N/A'))
+                sf(r_embed, "Pain Point", research.get('pain_point','N/A'))
+                sf(r_embed, "Potential",  research.get('monthly_potential','N/A'), inline=True)
                 await channel.send(embed=r_embed)
                 await asyncio.sleep(2)
 
-                # ── Stage 2: Generate Actual Product ──────────────────
+                # ── Stage 2: Generate Product ─────────────────────────
                 await channel.send(embed=discord.Embed(
-                    description="**Stage 2/5:** Generating the actual product (PDF or Notion)...",
+                    description="**Stage 2/5:** Generating the product (PDF or Notion)...",
                     color=0x1e3d52
                 ))
-
-                product_result = await generate_product(research, niche)
-                ptype = product_result.get('type', 'pdf').upper()
-
-                # Post product summary
-                prod_embed = discord.Embed(
-                    title=trunc(f"{'📄' if ptype=='PDF' else '📋'} {ptype} Product Generated", TITLE_MAX),
-                    description=trunc(product_result.get('summary', ''), DESC_MAX),
-                    color=0x00f5a0 if ptype == "PDF" else 0xb060ff,
-                    timestamp=datetime.utcnow()
-                )
-                structure = product_result.get('structure', {})
-                if structure.get('sections'):
-                    sf(prod_embed, "Sections", "\n".join([f"• {s}" for s in structure['sections'][:6]]))
-                sf(prod_embed, "Unique Angle", structure.get('unique_angle','N/A'), inline=True)
-                sf(prod_embed, "Complexity",   structure.get('complexity','N/A'),   inline=True)
-
-                if ptype == "PDF":
-                    result_data = product_result.get('result', {})
-                    sf(prod_embed, "File",      result_data.get('filename', 'N/A'), inline=True)
-                    sf(prod_embed, "Size",      f"{result_data.get('size_kb',0)} KB", inline=True)
-                    sf(prod_embed, "Pages",     str(result_data.get('page_count',0)), inline=True)
-                    prod_embed.add_field(
-                        name="📥 Download",
-                        value=f"File saved to Railway volume.\nUse `/download {niche}` to get the file.",
-                        inline=False
+                product_result = {'type': 'pdf', 'summary': '', 'ready_to_list': False, 'result': {}}
+                try:
+                    from ventures.product_generator import generate_product
+                    product_result = await generate_product(research, niche)
+                    ptype = product_result.get('type', 'pdf').upper()
+                    prod_embed = discord.Embed(
+                        title=trunc(f"{'📄' if ptype=='PDF' else '📋'} {ptype} Generated", TITLE_MAX),
+                        description=trunc(product_result.get('summary', ''), DESC_MAX),
+                        color=0x00f5a0 if ptype == "PDF" else 0xb060ff,
+                        timestamp=datetime.utcnow()
                     )
-                else:
+                    structure = product_result.get('structure', {})
+                    if structure.get('sections'):
+                        sf(prod_embed, "Sections", "\n".join([f"• {s}" for s in structure['sections'][:5]]))
                     result_data = product_result.get('result', {})
-                    if result_data.get('build_guide'):
-                        await channel.send(
-                            f"**📋 Notion Build Guide — follow these steps:**\n"
-                            f"```{trunc(result_data['build_guide'], 1900)}```"
-                        )
-
-                await channel.send(embed=prod_embed)
+                    if ptype == "PDF" and result_data.get('filename'):
+                        sf(prod_embed, "File", result_data.get('filename','N/A'), inline=True)
+                        sf(prod_embed, "Pages", str(result_data.get('page_count',0)), inline=True)
+                    await channel.send(embed=prod_embed)
+                except ImportError:
+                    await channel.send(embed=discord.Embed(
+                        description="⚠️ Product generator not available — skipping to listing.",
+                        color=0xff7733
+                    ))
                 await asyncio.sleep(2)
 
                 # ── Stage 3: Listing Pack ─────────────────────────────
@@ -132,11 +127,12 @@ async def run_build_pipeline(bot, channel_id: int):
                     description="**Stage 3/5:** Generating Etsy + Gumroad listing pack...",
                     color=0x1e3d52
                 ))
-
                 listing = await generate_listing_pack(research, {})
                 if listing:
-                    # Listing summary embed
-                    l_embed = discord.Embed(title="🏪 Listing Pack Ready", color=0x00f5a0, timestamp=datetime.utcnow())
+                    l_embed = discord.Embed(
+                        title="🏪 Listing Pack Ready",
+                        color=0x00f5a0, timestamp=datetime.utcnow()
+                    )
                     sf(l_embed, "📝 Etsy Title", f"```{trunc(listing.get('etsy_title',''), 950)}```")
                     sf(l_embed, "💰 Price", listing.get('etsy_price','$9'), inline=True)
                     sf(l_embed, "🛍️ Gumroad", listing.get('gumroad_price','$9'), inline=True)
@@ -145,14 +141,12 @@ async def run_build_pipeline(bot, channel_id: int):
                         sf(l_embed, "🏷️ Tags (13)", ", ".join(tags))
                     await channel.send(embed=l_embed)
 
-                    # Full description as plain message
                     desc = listing.get('etsy_description', '')
                     if desc:
                         await channel.send("**📋 Full Etsy Description — copy exactly:**")
                         for chunk in [desc[i:i+1900] for i in range(0, len(desc), 1900)]:
                             await channel.send(f"```{chunk}```")
 
-                    # Social posts
                     s_embed = discord.Embed(title="📱 Social Posts", color=0xff4fa3, timestamp=datetime.utcnow())
                     if listing.get('tiktok_hook'):       sf(s_embed, "🎬 TikTok",    listing['tiktok_hook'])
                     if listing.get('instagram_caption'): sf(s_embed, "📸 Instagram", listing['instagram_caption'])
@@ -162,12 +156,11 @@ async def run_build_pipeline(bot, channel_id: int):
 
                 await asyncio.sleep(2)
 
-                # ── Stage 4: Etsy Listing Approval ───────────────────
+                # ── Stage 4: Etsy Approval ────────────────────────────
                 await channel.send(embed=discord.Embed(
-                    description="**Stage 4/5:** Ready for Etsy — awaiting your approval...",
+                    description="**Stage 4/5:** Etsy listing ready for approval...",
                     color=0x1e3d52
                 ))
-
                 if listing:
                     listing_data = {
                         "title":       listing.get('etsy_title', research.get('product_name', niche))[:140],
@@ -176,24 +169,48 @@ async def run_build_pipeline(bot, channel_id: int):
                         "tags":        listing.get('etsy_tags', [])[:13],
                     }
 
-                    approval_embed = listing_approval_embed(listing_data, product_result)
-                    view = EtsyApprovalView(listing_data, product_result, bot)
+                    # Etsy buttons (lazy import)
+                    try:
+                        from ventures.etsy_manager import EtsyApprovalView, listing_approval_embed, EtsyClient, ETSY_SETUP_GUIDE
+                        etsy = EtsyClient()
+                        if not etsy.is_configured():
+                            await channel.send(f"⚠️ **Etsy not configured yet.**\n{ETSY_SETUP_GUIDE}")
+                        approval_embed = listing_approval_embed(listing_data, product_result)
+                        view = EtsyApprovalView(listing_data, product_result, bot)
+                        await channel.send(embed=approval_embed, view=view)
+                    except ImportError:
+                        await channel.send("⚠️ Etsy manager not available — listing data shown above.")
 
-                    # Show Etsy setup guide if not configured
-                    from ventures.etsy_manager import EtsyClient
-                    etsy = EtsyClient()
-                    if not etsy.is_configured():
-                        await channel.send(
-                            f"⚠️ **Etsy API not configured yet.**\n{ETSY_SETUP_GUIDE}"
+                    # Gumroad buttons (lazy import)
+                    try:
+                        from ventures.gumroad_manager import GumroadApprovalView, GumroadClient, GUMROAD_SETUP
+                        gr_embed = discord.Embed(
+                            title="📦 Also list on Gumroad?",
+                            description=(
+                                f"**{research.get('product_name', niche)}** — {listing.get('etsy_price','$9')}\n"
+                                "Gumroad = zero fees, instant payout, global reach."
+                            ),
+                            color=0xff90e8, timestamp=datetime.utcnow()
                         )
-
-                    await channel.send(embed=approval_embed, view=view)
+                        gr_view = GumroadApprovalView(
+                            {'niche': niche, 'product_name': research.get('product_name', niche)},
+                            {
+                                'title':               listing.get('etsy_title', research.get('product_name', niche))[:255],
+                                'gumroad_description': listing.get('gumroad_pitch', listing.get('etsy_description',''))[:1000],
+                                'price':               float(listing.get('etsy_price','9').replace('$','')),
+                                'tags':                listing.get('etsy_tags', [])[:10],
+                            },
+                            bot
+                        )
+                        await channel.send(embed=gr_embed, view=gr_view)
+                    except ImportError:
+                        pass  # Gumroad not available yet — silent skip
 
                 await asyncio.sleep(2)
 
                 # ── Stage 5: Store Lineup + Launch Plan ───────────────
                 await channel.send(embed=discord.Embed(
-                    description="**Stage 5/5:** Building store lineup + 30-day plan...",
+                    description="**Stage 5/5:** Store lineup + 30-day plan...",
                     color=0x1e3d52
                 ))
 
@@ -207,7 +224,9 @@ async def run_build_pipeline(bot, channel_id: int):
                     for i, p in enumerate(products):
                         sf(p_embed,
                            f"#{i+1}: {p.get('name','Unknown')}",
-                           f"{p.get('type','')} • {p.get('price','$9')}\n{trunc(p.get('one_line_description',''),150)}\n🔍 `{p.get('primary_keyword','')}`"
+                           f"{p.get('type','')} • {p.get('price','$9')}\n"
+                           f"{trunc(p.get('one_line_description',''),150)}\n"
+                           f"🔍 `{p.get('primary_keyword','')}`"
                         )
                     await channel.send(embed=p_embed)
 
@@ -238,26 +257,24 @@ async def run_build_pipeline(bot, channel_id: int):
 
                 # ── Done ──────────────────────────────────────────────
                 await channel.send(embed=discord.Embed(
-                    title="✅ Full Pipeline Complete!",
+                    title="✅ Build Complete!",
                     description=(
                         f"**{niche} — everything is ready.**\n\n"
-                        f"**What OpenClaw built:**\n"
-                        f"• {'PDF product file' if product_result.get('type')=='pdf' else 'Notion template spec + build guide'}\n"
-                        f"• Complete Etsy listing (title, tags, description)\n"
-                        f"• Gumroad product copy\n"
-                        f"• Social posts (TikTok, Instagram, Reddit, Pinterest)\n"
-                        f"• 5-product store lineup\n"
-                        f"• 30-day launch plan\n\n"
-                        f"**Your only job:** Open Etsy → paste the listing → upload the product file.\n"
+                        f"**Your next 3 actions:**\n"
+                        f"1. Build the product using the spec above\n"
+                        f"2. Upload to Etsy + Gumroad using buttons above\n"
+                        f"3. Post the social content to start driving traffic\n\n"
                         f"Type `/revenue add \"product\" 9.00` on your first sale 💰"
                     ),
                     color=0x00f5a0, timestamp=datetime.utcnow()
                 ))
 
                 bot.active_ventures.append({
-                    'niche': niche, 'research': research,
-                    'product': product_result, 'listing': listing,
-                    'plan': plan, 'started': datetime.now().isoformat()
+                    'niche':    niche,
+                    'research': research,
+                    'listing':  listing,
+                    'plan':     plan,
+                    'started':  datetime.now().isoformat()
                 })
 
         except Exception as e:
