@@ -15,6 +15,8 @@ from ventures.digital_product import (
 )
 from ventures.product_generator import generate_product
 from ventures.etsy_manager import EtsyApprovalView, listing_approval_embed, ETSY_SETUP_GUIDE
+from ventures.gumroad_manager import GumroadApprovalView, GumroadClient, GUMROAD_SETUP
+from ventures.pinterest_manager import auto_pin_product, pinterest_embed, PinterestClient
 from config.settings import settings
 
 logger = logging.getLogger("openclaw.build_pipeline")
